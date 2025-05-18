@@ -1,0 +1,10 @@
+torch==2.1.0+cu118 -f https://download.pytorch.org/whl/torch_stable.html
+torchvision==0.16.0+cu118 -f https://download.pytorch.org/whl/torch_stable.html
+torchaudio==2.1.0+cu118 -f https://download.pytorch.org/whl/torch_stable.html
+numpy>=1.21.0
+scipy>=1.7.0
+scikit-learn>=1.0.0
+tqdm>=4.62.0
+soundfile>=0.10.0
+PyQt5>=5.15.0
+sounddevice>=0.4.0
