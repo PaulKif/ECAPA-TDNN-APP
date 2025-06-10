@@ -23,7 +23,7 @@ python -m venv venv
 source venv/bin/activate  # В Windows: venv\Scripts\activate
 ```
 
-3. Установите необходимые зависимости:
+3. Установите необходимые зависимости (возможно понадобится cmake-3.31.7):
 ```bash
 pip install -r requirements.txt
 ```
