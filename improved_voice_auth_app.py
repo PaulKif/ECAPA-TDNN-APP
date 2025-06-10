@@ -6,7 +6,7 @@ import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
                            QWidget, QLabel, QLineEdit, QStackedWidget, QHBoxLayout,
                            QFrame, QProgressBar, QMessageBox, QComboBox, QSlider, QListWidget,
-                           QFileDialog, QTextEdit)
+                           QFileDialog, QTextEdit, QScrollArea)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor
 from model import ECAPA_TDNN
@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from scipy.spatial.distance import cosine, euclidean
 from scipy.stats import pearsonr
+from speaker_verification import SpeakerVerifier
+import librosa
 
 class FileProcessingThread(QThread):
     """Отдельный поток для обработки аудио файла"""
@@ -35,8 +37,7 @@ class FileProcessingThread(QThread):
             
             # Ресемплинг если необходимо
             if sample_rate != 16000:
-                # Здесь можно добавить ресемплинг если нужно
-                pass
+                audio_data = librosa.resample(audio_data, orig_sr=sample_rate, target_sr=16000)
                 
             self.finished.emit(audio_data)
         except Exception as e:
@@ -87,7 +88,23 @@ class ModernLineEdit(QLineEdit):
 class VoiceAuthApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowTitle("Voice Authentication System")
+        self.setGeometry(100, 100, 800, 600)
+        
+        # Create main widget and layout
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+        
+        # Initialize UI components first
         self.init_ui()
+        
+        # Apply modern theme
+        self.apply_modern_theme()
+        
+        # Initialize the speaker verification model
+        self.verifier = SpeakerVerifier()
+        
+        # Initialize the ECAPA-TDNN model
         self.init_model()
         
     def init_model(self):
@@ -125,9 +142,6 @@ class VoiceAuthApp(QMainWindow):
         
         # Начинаем с приветственного экрана
         self.stack.setCurrentIndex(0)
-        
-        # Применяем современную тему
-        self.apply_modern_theme()
         
     def add_welcome_screen(self):
         """Создание приветственного экрана"""
@@ -194,20 +208,64 @@ class VoiceAuthApp(QMainWindow):
         title.setStyleSheet("font-size: 20px; margin: 20px;")
         layout.addWidget(title)
         
+        # Информация о множественном выборе файлов
+        info_label = QLabel("Вы можете выбрать несколько аудиофайлов для создания более точного голосового профиля.\nВсе файлы будут объединены в один для обработки.")
+        info_label.setStyleSheet("color: #757575; font-size: 13px; margin: 10px;")
+        layout.addWidget(info_label)
+        
         # Поля ввода
         self.username_input = ModernLineEdit()
         self.username_input.setPlaceholderText("Введите имя пользователя")
         layout.addWidget(self.username_input)
         
-        # Кнопка выбора файла
-        select_file_btn = ModernButton("Выбрать аудио файл")
-        select_file_btn.clicked.connect(self.select_registration_file)
-        layout.addWidget(select_file_btn)
+        # Список выбранных файлов
+        self.selected_files_list = QListWidget()
+        self.selected_files_list.setStyleSheet("""
+            QListWidget {
+                border: 2px solid #BDBDBD;
+                border-radius: 5px;
+                padding: 5px;
+                background-color: white;
+            }
+            QListWidget::item {
+                padding: 5px;
+            }
+        """)
+        layout.addWidget(self.selected_files_list)
         
-        # Путь к выбранному файлу
-        self.file_path_label = QLabel("Файл не выбран")
-        self.file_path_label.setStyleSheet("color: #757575;")
-        layout.addWidget(self.file_path_label)
+        # Кнопка выбора файлов
+        select_files_btn = ModernButton("Выбрать аудио файлы")
+        select_files_btn.clicked.connect(self.select_registration_files)
+        layout.addWidget(select_files_btn)
+        
+        # Кнопка удаления выбранного файла
+        remove_file_btn = ModernButton("Удалить выбранный файл")
+        remove_file_btn.clicked.connect(self.remove_selected_file)
+        layout.addWidget(remove_file_btn)
+        
+        # Кнопка регистрации
+        register_btn = ModernButton("Зарегистрировать")
+        register_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                border: none;
+                border-radius: 5px;
+                color: white;
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+            QPushButton:disabled {
+                background-color: #BDBDBD;
+            }
+        """)
+        register_btn.clicked.connect(self.start_registration)
+        layout.addWidget(register_btn)
         
         # Статус
         self.status_label = QLabel()
@@ -241,10 +299,23 @@ class VoiceAuthApp(QMainWindow):
         self.verify_file_path_label.setStyleSheet("color: #757575;")
         layout.addWidget(self.verify_file_path_label)
         
-        # Результат верификации
-        self.verify_result = QLabel()
-        self.verify_result.setStyleSheet("font-size: 16px; margin: 20px;")
-        layout.addWidget(self.verify_result)
+        # Создаем скроллируемую область для результатов
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+        """)
+        
+        # Контейнер для результатов
+        self.results_container = QWidget()
+        self.results_layout = QVBoxLayout(self.results_container)
+        self.results_layout.setAlignment(Qt.AlignTop)
+        
+        scroll_area.setWidget(self.results_container)
+        layout.addWidget(scroll_area)
         
         # Кнопка назад
         back_btn = ModernButton("Назад")
@@ -252,7 +323,7 @@ class VoiceAuthApp(QMainWindow):
         layout.addWidget(back_btn)
         
         self.stack.addWidget(verify_widget)
-        
+
     def add_settings_screen(self):
         """Экран настроек"""
         settings_widget = QWidget()
@@ -467,7 +538,7 @@ class VoiceAuthApp(QMainWindow):
             # Обработка второго файла
             self.processing_thread = FileProcessingThread(self.second_comparison_file)
             self.processing_thread.finished.connect(
-                lambda second_audio_data: self.finish_comparison(first_embedding, second_audio_data)
+                lambda second_audio_data: self.finish_comparison(first_audio_data, second_audio_data)
             )
             self.processing_thread.error.connect(lambda msg: self.comparison_result.setText(f"Ошибка: {msg}"))
             self.processing_thread.start()
@@ -476,74 +547,38 @@ class VoiceAuthApp(QMainWindow):
             self.comparison_result.setText(f"Ошибка при обработке первого файла: {str(e)}")
             self.comparison_result.setStyleSheet("color: #F44336; font-size: 16px;")
             
-    def finish_comparison(self, first_embedding, second_audio_data):
+    def finish_comparison(self, first_audio_data, second_audio_data):
         """Завершение сравнения двух файлов"""
         try:
-            with torch.no_grad():
-                second_audio_tensor = torch.FloatTensor(second_audio_data).cuda()
-                second_audio_tensor = second_audio_tensor.unsqueeze(0)
-                second_embedding = self.model(second_audio_tensor, aug=False)
-                second_embedding = second_embedding.cpu().numpy()
+            # Save audio data to temporary files
+            temp_first_file = "temp_first_audio.wav"
+            temp_second_file = "temp_second_audio.wav"
             
-            # Нормализация эмбеддингов
-            first_embedding = first_embedding / np.linalg.norm(first_embedding)
-            second_embedding = second_embedding / np.linalg.norm(second_embedding)
+            sf.write(temp_first_file, first_audio_data, 16000)
+            sf.write(temp_second_file, second_audio_data, 16000)
             
-            # Вычисление различных метрик
-            # 1. Косинусное сходство
-            cosine_sim = 1 - cosine(first_embedding.flatten(), second_embedding.flatten())
+            # Compare files using SpeakerVerifier
+            score, prediction, detailed_metrics = self.verifier.verify_files(temp_first_file, temp_second_file)
             
-            # 2. Евклидово расстояние (нормализованное)
-            euclidean_dist = euclidean(first_embedding.flatten(), second_embedding.flatten())
-            euclidean_sim = np.exp(-euclidean_dist)  # Экспоненциальное преобразование
+            # Clean up temporary files
+            os.remove(temp_first_file)
+            os.remove(temp_second_file)
             
-            # 3. Корреляция Пирсона
-            pearson_corr, _ = pearsonr(first_embedding.flatten(), second_embedding.flatten())
-            pearson_sim = (pearson_corr + 1) / 2  # Нормализация к [0,1]
-            
-            # 4. Манхэттенское расстояние (нормализованное)
-            manhattan_dist = np.sum(np.abs(first_embedding - second_embedding))
-            manhattan_sim = np.exp(-manhattan_dist / len(first_embedding.flatten()))
-            
-            # 5. Косинусное сходство по частям (более строгая метрика)
-            chunk_size = len(first_embedding.flatten()) // 4
-            chunk_sims = []
-            for i in range(0, len(first_embedding.flatten()), chunk_size):
-                chunk1 = first_embedding.flatten()[i:i+chunk_size]
-                chunk2 = second_embedding.flatten()[i:i+chunk_size]
-                if len(chunk1) == len(chunk2):
-                    chunk_sim = 1 - cosine(chunk1, chunk2)
-                    chunk_sims.append(chunk_sim)
-            chunk_sim = np.mean(chunk_sims)
-            
-            # Комбинированная оценка с весами
-            weights = {
-                'cosine': 0.3,
-                'euclidean': 0.2,
-                'pearson': 0.2,
-                'manhattan': 0.15,
-                'chunk': 0.15
-            }
-            
-            combined_score = (
-                weights['cosine'] * cosine_sim +
-                weights['euclidean'] * euclidean_sim +
-                weights['pearson'] * pearson_sim +
-                weights['manhattan'] * manhattan_sim +
-                weights['chunk'] * chunk_sim
-            )
-            
-            # Преобразование в проценты с нелинейным масштабированием
-            similarity_percentage = (np.tanh(combined_score * 2 - 1) + 1) * 50
+            # Calculate similarity percentage and convert to Python float
+            similarity_percentage = float(score * 100)
             
             # Визуализация
             self.figure.clear()
             ax = self.figure.add_subplot(111)
             
             # Построение графика сравнения
-            metrics = ['Косинусное\nсходство', 'Евклидово\nсходство', 'Корреляция\nПирсона', 
-                      'Манхэттенское\nсходство', 'Сходство по\nчастям', 'Комбинированная\nоценка']
-            values = [cosine_sim, euclidean_sim, pearson_sim, manhattan_sim, chunk_sim, combined_score]
+            metrics = ['Базовый\nсчет', 'Косинусное\nсходство', 'Корреляция\nПирсона', 
+                      'Евклидово\nрасстояние', 'Манхэттенское\nрасстояние']
+            values = [float(detailed_metrics['base_score']), 
+                     float(detailed_metrics['cosine_similarity']),
+                     float(detailed_metrics['pearson_correlation']),
+                     float(np.exp(-detailed_metrics['euclidean_distance'])),
+                     float(np.exp(-detailed_metrics['manhattan_distance'] / len(first_audio_data)))]
             
             bars = ax.bar(metrics, values)
             ax.set_ylim(0, 1)
@@ -560,29 +595,25 @@ class VoiceAuthApp(QMainWindow):
             
             # Формирование подробного отчета
             result_text = "=== Результаты сравнения голосов ===\n\n"
-            result_text += f"1. Косинусное сходство: {cosine_sim:.3f}\n"
+            result_text += f"1. Базовый счет: {float(detailed_metrics['base_score']):.3f}\n"
+            result_text += f"   • Основная оценка схожести голосов\n"
+            result_text += f"   • Диапазон: от 0 до 1\n\n"
+            
+            result_text += f"2. Косинусное сходство: {float(detailed_metrics['cosine_similarity']):.3f}\n"
             result_text += f"   • Показывает схожесть направления векторов\n"
             result_text += f"   • Диапазон: от 0 до 1\n\n"
             
-            result_text += f"2. Евклидово сходство: {euclidean_sim:.3f}\n"
-            result_text += f"   • Показывает близость векторов в пространстве\n"
-            result_text += f"   • Диапазон: от 0 до 1\n\n"
-            
-            result_text += f"3. Корреляция Пирсона: {pearson_sim:.3f}\n"
+            result_text += f"3. Корреляция Пирсона: {float(detailed_metrics['pearson_correlation']):.3f}\n"
             result_text += f"   • Показывает линейную зависимость между векторами\n"
             result_text += f"   • Диапазон: от 0 до 1\n\n"
             
-            result_text += f"4. Манхэттенское сходство: {manhattan_sim:.3f}\n"
-            result_text += f"   • Показывает схожесть по абсолютным значениям\n"
-            result_text += f"   • Диапазон: от 0 до 1\n\n"
+            result_text += f"4. Евклидово расстояние: {float(detailed_metrics['euclidean_distance']):.3f}\n"
+            result_text += f"   • Показывает геометрическое расстояние между векторами\n"
+            result_text += f"   • Меньше значение - больше схожесть\n\n"
             
-            result_text += f"5. Сходство по частям: {chunk_sim:.3f}\n"
-            result_text += f"   • Показывает локальную схожесть в разных частях голоса\n"
-            result_text += f"   • Диапазон: от 0 до 1\n\n"
-            
-            result_text += f"6. Комбинированная оценка: {combined_score:.3f}\n"
-            result_text += f"   • Взвешенная оценка по всем метрикам\n"
-            result_text += f"   • Диапазон: от 0 до 1\n\n"
+            result_text += f"5. Манхэттенское расстояние: {float(detailed_metrics['manhattan_distance']):.3f}\n"
+            result_text += f"   • Показывает сумму абсолютных разностей\n"
+            result_text += f"   • Меньше значение - больше схожесть\n\n"
             
             result_text += "=== Заключение ===\n"
             if similarity_percentage > 85:  # Повышенный порог
@@ -601,7 +632,13 @@ class VoiceAuthApp(QMainWindow):
             self.comparison_result.setText(result_text)
             
         except Exception as e:
-            self.comparison_result.setText(f"Ошибка при сравнении: {str(e)}")
+            error_msg = f"Ошибка при сравнении: {str(e)}"
+            print(f"\n{error_msg}")  # Вывод в консоль
+            print(f"Тип ошибки: {type(e).__name__}")  # Вывод типа ошибки
+            import traceback
+            print("Полный стек ошибки:")
+            print(traceback.format_exc())  # Вывод полного стека ошибки
+            self.comparison_result.setText(error_msg)
             self.comparison_result.setStyleSheet("color: #F44336; font-size: 16px;")
             
     def apply_modern_theme(self):
@@ -629,52 +666,67 @@ class VoiceAuthApp(QMainWindow):
         self.status_label.setStyleSheet(f"color: {colors.get(status_type, '#757575')};")
         self.status_label.setText(message)
         
-    def select_registration_file(self):
-        """Выбор файла для регистрации"""
-        if not self.username_input.text():
-            self.show_status("Введите имя пользователя", "warning")
-            return
-            
-        file_path, _ = QFileDialog.getOpenFileName(
+    def select_registration_files(self):
+        """Выбор файлов для регистрации"""
+        file_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Выберите аудио файл",
+            "Выберите аудио файлы",
             "",
             "Audio Files (*.wav *.mp3 *.ogg *.flac);;All Files (*.*)"
         )
         
-        if file_path:
-            self.file_path_label.setText(f"Выбран файл: {os.path.basename(file_path)}")
-            self.process_registration_file(file_path)
+        if file_paths:
+            for file_path in file_paths:
+                self.selected_files_list.addItem(file_path)
+            self.show_status(f"Выбрано файлов: {len(file_paths)}", "info")
             
-    def select_verification_file(self):
-        """Выбор файла для верификации"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Выберите аудио файл",
-            "",
-            "Audio Files (*.wav *.mp3 *.ogg *.flac);;All Files (*.*)"
-        )
-        
-        if file_path:
-            self.verify_file_path_label.setText(f"Выбран файл: {os.path.basename(file_path)}")
-            self.process_verification_file(file_path)
+    def remove_selected_file(self):
+        """Удаление выбранного файла из списка"""
+        current_item = self.selected_files_list.currentItem()
+        if current_item:
+            self.selected_files_list.takeItem(self.selected_files_list.row(current_item))
+            self.show_status(f"Осталось файлов: {self.selected_files_list.count()}", "info")
             
     def process_registration_file(self, file_path):
         """Обработка файла для регистрации"""
-        self.processing_thread = FileProcessingThread(file_path)
-        self.processing_thread.finished.connect(self.handle_registration_audio)
-        self.processing_thread.error.connect(lambda msg: self.show_status(f"Ошибка: {msg}", "error"))
-        self.processing_thread.start()
-        self.show_status("Обработка файла...", "info")
+        if self.selected_files_list.count() == 0:
+            self.show_status("Выберите хотя бы один аудио файл", "warning")
+            return
+            
+        # Создаем временный файл для объединенного аудио
+        temp_combined_file = "temp_combined_audio.wav"
+        combined_audio = None
         
-    def process_verification_file(self, file_path):
-        """Обработка файла для верификации"""
-        self.processing_thread = FileProcessingThread(file_path)
-        self.processing_thread.finished.connect(self.verify_voice)
-        self.processing_thread.error.connect(lambda msg: self.verify_result.setText(f"Ошибка: {msg}"))
-        self.processing_thread.start()
-        self.verify_result.setText("Обработка файла...")
-        
+        try:
+            # Объединяем все выбранные файлы
+            for i in range(self.selected_files_list.count()):
+                file_path = self.selected_files_list.item(i).text()
+                audio_data, sample_rate = sf.read(file_path)
+                
+                # Преобразование в моно если стерео
+                if len(audio_data.shape) > 1:
+                    audio_data = audio_data.mean(axis=1)
+                
+                if combined_audio is None:
+                    combined_audio = audio_data
+                else:
+                    combined_audio = np.concatenate([combined_audio, audio_data])
+            
+            # Сохраняем объединенный файл
+            sf.write(temp_combined_file, combined_audio, sample_rate)
+            
+            # Запускаем обработку объединенного файла
+            self.processing_thread = FileProcessingThread(temp_combined_file)
+            self.processing_thread.finished.connect(self.handle_registration_audio)
+            self.processing_thread.error.connect(lambda msg: self.show_status(f"Ошибка: {msg}", "error"))
+            self.processing_thread.start()
+            self.show_status("Обработка объединенного файла...", "info")
+            
+        except Exception as e:
+            self.show_status(f"Ошибка при объединении файлов: {str(e)}", "error")
+            if os.path.exists(temp_combined_file):
+                os.remove(temp_combined_file)
+            
     def handle_registration_audio(self, audio_data):
         """Обработка аудио данных для регистрации"""
         try:
@@ -698,41 +750,177 @@ class VoiceAuthApp(QMainWindow):
             
             self.show_status(f"Пользователь {username} успешно зарегистрирован", "success")
             
+            # Очистка полей после успешной регистрации
+            self.username_input.clear()
+            self.selected_files_list.clear()
+            
         except Exception as e:
             self.show_status(f"Ошибка при обработке файла: {str(e)}", "error")
             
+    def select_verification_file(self):
+        """Выбор файла для верификации"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите аудио файл",
+            "",
+            "Audio Files (*.wav *.mp3 *.ogg *.flac);;All Files (*.*)"
+        )
+        
+        if file_path:
+            self.verify_file_path_label.setText(f"Выбран файл: {os.path.basename(file_path)}")
+            self.process_verification_file(file_path)
+            
+    def process_verification_file(self, file_path):
+        """Обработка файла для верификации"""
+        self.processing_thread = FileProcessingThread(file_path)
+        self.processing_thread.finished.connect(self.verify_voice)
+        self.processing_thread.error.connect(lambda msg: self.comparison_result.setText(f"Ошибка: {msg}"))
+        self.processing_thread.start()
+        self.comparison_result.setText("Обработка файла...")
+        
     def verify_voice(self, audio_data):
         """Верификация записанного голоса"""
         try:
-            # Извлечение эмбеддинга для проверяемого голоса
-            with torch.no_grad():
-                audio_tensor = torch.FloatTensor(audio_data).cuda()
-                audio_tensor = audio_tensor.unsqueeze(0)
-                test_embedding = self.model(audio_tensor, aug=False)
-                test_embedding = test_embedding.cpu().numpy()
+            # Save audio data to temporary file
+            temp_file = "temp_verify_audio.wav"
+            sf.write(temp_file, audio_data, 16000)
             
-            # Сравнение с сохраненными эмбеддингами
-            best_match = None
-            best_score = -1
+            # Compare with saved embeddings
+            matches = []
             
             for file in os.listdir("voice_embeddings"):
-                if file.endswith(".npy"):
-                    saved_embedding = np.load(f"voice_embeddings/{file}")
-                    score = np.dot(test_embedding, saved_embedding.T)
-                    if score > best_score:
-                        best_score = score
-                        best_match = file[:-4]
+                if file.endswith(".wav"):
+                    saved_file = os.path.join("voice_embeddings", file)
+                    score, prediction, detailed_metrics = self.verifier.verify_files(temp_file, saved_file)
+                    
+                    matches.append({
+                        'username': file[:-4],  # Remove .wav extension
+                        'score': float(score),
+                        'metrics': detailed_metrics
+                    })
             
-            if best_score > 0.7:
-                self.verify_result.setText(f"Верификация успешна!\nПользователь: {best_match}")
-                self.verify_result.setStyleSheet("color: #4CAF50; font-size: 16px;")
+            # Sort matches by score in descending order
+            matches.sort(key=lambda x: x['score'], reverse=True)
+            
+            # Clean up temporary file
+            os.remove(temp_file)
+            
+            # Clear previous results
+            for i in reversed(range(self.results_layout.count())): 
+                self.results_layout.itemAt(i).widget().setParent(None)
+            
+            # Add verification status
+            status_label = QLabel()
+            if matches:
+                best_match = matches[0]
+                if best_match['score'] > 0.7:  # Порог верификации
+                    status_label.setText("✅ Верификация успешна!")
+                    status_label.setStyleSheet("color: #4CAF50; font-size: 16px; font-weight: bold;")
+                else:
+                    status_label.setText("❌ Верификация не удалась")
+                    status_label.setStyleSheet("color: #F44336; font-size: 16px; font-weight: bold;")
             else:
-                self.verify_result.setText("Верификация не удалась.\nПользователь не распознан.")
-                self.verify_result.setStyleSheet("color: #F44336; font-size: 16px;")
+                status_label.setText("❌ Нет зарегистрированных пользователей для сравнения")
+                status_label.setStyleSheet("color: #F44336; font-size: 16px; font-weight: bold;")
+            
+            self.results_layout.addWidget(status_label)
+            
+            # Add matches
+            for i, match in enumerate(matches, 1):
+                # Create container for each match
+                match_container = QWidget()
+                match_layout = QVBoxLayout(match_container)
+                
+                # Create header with username and score
+                header = QWidget()
+                header_layout = QHBoxLayout(header)
+                
+                username_label = QLabel(f"{i}. {match['username']}")
+                username_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+                
+                score_label = QLabel(f"Схожесть: {match['score']:.2%}")
+                score_label.setStyleSheet("color: #2196F3; font-size: 14px;")
+                
+                details_btn = QPushButton("Подробнее")
+                details_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #E0E0E0;
+                        border: none;
+                        border-radius: 3px;
+                        padding: 5px 10px;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #BDBDBD;
+                    }
+                """)
+                
+                header_layout.addWidget(username_label)
+                header_layout.addWidget(score_label)
+                header_layout.addWidget(details_btn)
+                
+                # Create details widget (initially hidden)
+                details_widget = QWidget()
+                details_layout = QVBoxLayout(details_widget)
+                details_layout.setContentsMargins(20, 0, 0, 0)
+                
+                metrics_text = f"""
+                • Базовый счет: {match['metrics']['base_score']:.3f}
+                • Косинусное сходство: {match['metrics']['cosine_similarity']:.3f}
+                • Корреляция Пирсона: {match['metrics']['pearson_correlation']:.3f}
+                • Евклидово расстояние: {match['metrics']['euclidean_distance']:.3f}
+                • Манхэттенское расстояние: {match['metrics']['manhattan_distance']:.3f}
+                """
+                details_label = QLabel(metrics_text)
+                details_label.setStyleSheet("color: #757575; font-size: 13px;")
+                details_layout.addWidget(details_label)
+                
+                details_widget.hide()
+                
+                # Connect button click to toggle details
+                details_btn.clicked.connect(lambda checked, w=details_widget, b=details_btn: self.toggle_details(w, b))
+                
+                match_layout.addWidget(header)
+                match_layout.addWidget(details_widget)
+                
+                self.results_layout.addWidget(match_container)
                 
         except Exception as e:
-            self.verify_result.setText(f"Ошибка при верификации: {str(e)}")
-            self.verify_result.setStyleSheet("color: #F44336; font-size: 16px;")
+            error_msg = f"Ошибка при верификации: {str(e)}"
+            print(f"\n{error_msg}")  # Вывод в консоль
+            print(f"Тип ошибки: {type(e).__name__}")  # Вывод типа ошибки
+            import traceback
+            print("Полный стек ошибки:")
+            print(traceback.format_exc())  # Вывод полного стека ошибки
+            
+            # Clear previous results
+            for i in reversed(range(self.results_layout.count())): 
+                self.results_layout.itemAt(i).widget().setParent(None)
+            
+            error_label = QLabel(error_msg)
+            error_label.setStyleSheet("color: #F44336; font-size: 14px;")
+            self.results_layout.addWidget(error_label)
+
+    def toggle_details(self, details_widget, button):
+        """Переключение видимости деталей"""
+        if details_widget.isVisible():
+            details_widget.hide()
+            button.setText("Подробнее")
+        else:
+            details_widget.show()
+            button.setText("Скрыть")
+
+    def start_registration(self):
+        """Начало процесса регистрации"""
+        if not self.username_input.text():
+            self.show_status("Введите имя пользователя", "warning")
+            return
+            
+        if self.selected_files_list.count() == 0:
+            self.show_status("Выберите хотя бы один аудио файл", "warning")
+            return
+            
+        self.process_registration_file(None)  # Передаем None, так как теперь используем список файлов
 
 def main():
     app = QApplication(sys.argv)
