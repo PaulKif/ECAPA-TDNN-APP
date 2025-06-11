@@ -10,6 +10,9 @@
 - Регистрация и верификация пользователей
 - Поддерживаемые форматы: WAV, MP3, OGG, FLAC
 
+  ![image](https://github.com/user-attachments/assets/ed2dfb91-da7b-4bd2-83b3-fe163efdd7f9)
+
+
 ## Установка
 
 1. Клонируйте репозиторий:
